@@ -7,22 +7,22 @@ import "math/big"
 import "fmt"
 
 type Clerk struct {
-	servers []string
-	// You will have to modify this struct.
+    servers []string
+    // You will have to modify this struct.
 }
 
 func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
+    max := big.NewInt(int64(1) << 62)
+    bigx, _ := rand.Int(rand.Reader, max)
+    x := bigx.Int64()
+    return x
 }
 
 func MakeClerk(servers []string) *Clerk {
-	ck := new(Clerk)
-	ck.servers = servers
-	// You'll have to add code here.
-	return ck
+    ck := new(Clerk)
+    ck.servers = servers
+    // You'll have to add code here.
+    return ck
 }
 
 //
@@ -43,20 +43,20 @@ func MakeClerk(servers []string) *Clerk {
 // please don't change this function.
 //
 func call(srv string, rpcname string,
-	args interface{}, reply interface{}) bool {
-	c, errx := rpc.Dial("unix", srv)
-	if errx != nil {
-		return false
-	}
-	defer c.Close()
+    args interface{}, reply interface{}) bool {
+    c, errx := rpc.Dial("unix", srv)
+    if errx != nil {
+        return false
+    }
+    defer c.Close()
 
-	err := c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
-	}
+    err := c.Call(rpcname, args, reply)
+    if err == nil {
+        return true
+    }
 
-	fmt.Println(err)
-	return false
+    fmt.Println(err)
+    return false
 }
 
 //
@@ -65,20 +65,20 @@ func call(srv string, rpcname string,
 // keeps trying forever in the face of all other errors.
 //
 func (ck *Clerk) Get(key string) string {
-	// You will have to modify this function.
-	return ""
+    // You will have to modify this function.
+    return ""
 }
 
 //
 // shared by Put and Append.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
+    // You will have to modify this function.
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+    ck.PutAppend(key, value, "Put")
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+    ck.PutAppend(key, value, "Append")
 }

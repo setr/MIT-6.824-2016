@@ -10,31 +10,31 @@ import "encoding/gob"
 
 
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+    // Your definitions here.
+    // Field names must start with capital letters,
+    // otherwise RPC will break.
 }
 
 type ShardKV struct {
-	mu           sync.Mutex
-	me           int
-	rf           *raft.Raft
-	applyCh      chan raft.ApplyMsg
-	make_end     func(string) *labrpc.ClientEnd
-	gid          int
-	masters      []*labrpc.ClientEnd
-	maxraftstate int // snapshot if log grows this big
+    mu           sync.Mutex
+    me           int
+    rf           *raft.Raft
+    applyCh      chan raft.ApplyMsg
+    make_end     func(string) *labrpc.ClientEnd
+    gid          int
+    masters      []*labrpc.ClientEnd
+    maxraftstate int // snapshot if log grows this big
 
-	// Your definitions here.
+    // Your definitions here.
 }
 
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+    // Your code here.
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+    // Your code here.
 }
 
 //
@@ -44,8 +44,8 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // turn off debug output from this instance.
 //
 func (kv *ShardKV) Kill() {
-	kv.rf.Kill()
-	// Your code here, if desired.
+    kv.rf.Kill()
+    // Your code here, if desired.
 }
 
 
@@ -78,25 +78,25 @@ func (kv *ShardKV) Kill() {
 // for any long-running work.
 //
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, masters []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
-	// call gob.Register on structures you want
-	// Go's RPC library to marshall/unmarshall.
-	gob.Register(Op{})
+    // call gob.Register on structures you want
+    // Go's RPC library to marshall/unmarshall.
+    gob.Register(Op{})
 
-	kv := new(ShardKV)
-	kv.me = me
-	kv.maxraftstate = maxraftstate
-	kv.make_end = make_end
-	kv.gid = gid
-	kv.masters = masters
+    kv := new(ShardKV)
+    kv.me = me
+    kv.maxraftstate = maxraftstate
+    kv.make_end = make_end
+    kv.gid = gid
+    kv.masters = masters
 
-	// Your initialization code here.
+    // Your initialization code here.
 
-	// Use something like this to talk to the shardmaster:
-	// kv.mck = shardmaster.MakeClerk(kv.masters)
+    // Use something like this to talk to the shardmaster:
+    // kv.mck = shardmaster.MakeClerk(kv.masters)
 
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+    kv.applyCh = make(chan raft.ApplyMsg)
+    kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 
-	return kv
+    return kv
 }
