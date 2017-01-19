@@ -11,12 +11,12 @@ package raft
 import "labrpc"
 import "log"
 import "sync"
+import "time"
 import "testing"
 import "runtime"
 import crand "crypto/rand"
 import "encoding/base64"
 import "sync/atomic"
-import "time"
 import "fmt"
 
 func randstring(n int) string {

@@ -19,10 +19,21 @@ package raft
 
 import "sync"
 import "labrpc"
+import "time"
+import "math/rand"
+import "fmt"
 
 // import "bytes"
 // import "encoding/gob"
 
+
+const (
+    STATE_LEADER = iota
+    STATE_CANDIDATE
+    STATE_FLLOWER
+
+    HBINTERVAL = 50 * time.Millisecond // 50ms
+)
 
 
 //
@@ -50,6 +61,15 @@ type Raft struct {
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
 
+    currentTerm int
+    voteFor int
+    voteCount int
+    state int
+    chanCommit chan bool
+    chanHeartbeat chan bool
+    chanGrantVote chan bool
+    chanLeader chan bool
+    chanApply chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -57,8 +77,16 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 
     var term int
-    var isleader bool
+	var isleader bool
     // Your code here.
+
+    term = rf.currentTerm
+    if rf.state == STATE_LEADER {
+        isleader = true
+    } else {
+        isleader = false
+    }
+
     return term, isleader
 }
 
@@ -98,6 +126,8 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
     // Your data here.
+    Term int
+    LeaderId int
 }
 
 //
@@ -105,6 +135,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
     // Your data here.
+    Term int
+    Success bool
 }
 
 //
@@ -112,6 +144,38 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
     // Your code here.
+    fmt.Printf("%v: Get request vote from %v, term %v\n", rf.me, args.LeaderId, args.Term)
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
+    if (args.Term == rf.currentTerm && rf.voteFor == -1) || (args.Term > rf.currentTerm){
+        rf.currentTerm = args.Term
+        rf.voteFor = args.LeaderId
+
+        reply.Term = args.Term
+        reply.Success = true
+		fmt.Printf("%v: Vote to %v\n", rf.me, args.LeaderId)
+    } else {
+		fmt.Printf("%v: Don't vote to %v\n", rf.me, args.LeaderId)
+        reply.Term = rf.currentTerm
+        reply.Success = false
+    }
+}
+
+func (rf *Raft) boatcastRequestVote() {
+    var args RequestVoteArgs
+    rf.mu.Lock()
+    args.Term = rf.currentTerm
+    args.LeaderId = rf.me
+    rf.mu.Unlock()
+
+    for i := range rf.peers {
+        if i != rf.me && rf.state == STATE_CANDIDATE {
+            go func (i int) {
+                var reply RequestVoteReply
+                rf.sendRequestVote(i, args, &reply)
+            }(i)
+        }
+    }
 }
 
 //
@@ -133,7 +197,61 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
     ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
+    if ok {
+        term := rf.currentTerm
+        if rf.state != STATE_CANDIDATE {
+            return ok
+        }
+        if args.Term != term {
+            return ok
+        }
+        if reply.Success {
+            rf.voteCount++
+            if rf.state == STATE_CANDIDATE && rf.voteCount > len(rf.peers)/2 {
+                rf.state = STATE_FLLOWER
+                rf.chanLeader <- true
+            }
+        }
+    }
     return ok
+}
+
+type AppendEntriesArgs struct {
+    Term int
+    Leader int
+}
+
+type AppendEntriesReply struct {
+
+}
+
+func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
+    rf.chanHeartbeat <- true
+
+	rf.currentTerm = args.Term
+	rf.state = STATE_FLLOWER
+}
+
+func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool {
+    // fmt.Printf("%v: Send heartbeat to %v\n", rf.me, server)
+    ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+    return ok
+}
+
+func (rf *Raft) boatcastAppendEntries() {
+    for i := range rf.peers {
+        if i != rf.me && rf.state == STATE_LEADER {
+            var args AppendEntriesArgs
+			args.Term = rf.currentTerm
+			args.Leader = rf.me
+            go func(i int, args AppendEntriesArgs) {
+                var reply AppendEntriesReply
+                rf.sendAppendEntries(i, args, &reply)
+            }(i,args)
+        }
+    }
 }
 
 
@@ -154,7 +272,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
     index := -1
     term := -1
     isLeader := true
-
 
     return index, term, isLeader
 }
@@ -188,10 +305,53 @@ func Make(peers []*labrpc.ClientEnd, me int,
     rf.me = me
 
     // Your initialization code here.
+    rf.currentTerm = 0
+    rf.voteFor = -1
+    rf.state = STATE_FLLOWER
+    rf.chanCommit = make(chan bool,100)
+    rf.chanHeartbeat = make(chan bool,100)
+    rf.chanGrantVote = make(chan bool,100)
+    rf.chanLeader = make(chan bool,100)
 
     // initialize from state persisted before a crash
     rf.readPersist(persister.ReadRaftState())
 
+    go func() {
+        for {
+            switch rf.state {
+            case STATE_FLLOWER:
+                select {
+                case <- rf.chanHeartbeat:
+                case <- rf.chanGrantVote:
+                case <- time.After(time.Duration(rand.Int63() % 333 + 550) * time.Millisecond):
+                    rf.state = STATE_CANDIDATE
+                }
+            case STATE_CANDIDATE:
+                fmt.Printf("%v: Start candidate\n", rf.me)
+                rf.mu.Lock()
+                rf.currentTerm++
+                rf.voteFor = me
+                rf.voteCount = 1
+                rf.mu.Unlock()
+                go rf.boatcastRequestVote()
+                select {
+                case <-time.After(time.Duration(rand.Int63() % 333 + 550) * time.Millisecond):
+                case <-rf.chanHeartbeat:
+					fmt.Printf("%v: Reveive chanHeartbeat\n",rf.me)
+                    rf.state = STATE_FLLOWER
+                case <- rf.chanLeader:
+                    rf.mu.Lock()
+                    rf.state = STATE_LEADER
+                    fmt.Printf("%v: Become leader\n",rf.me)
+					rf.mu.Unlock()
+					// rf.boatcastAppendEntries()
+                }
+            case STATE_LEADER:
+                rf.boatcastAppendEntries()
+                time.Sleep(HBINTERVAL)
+            }
+        }
+    }()
 
     return rf
 }
