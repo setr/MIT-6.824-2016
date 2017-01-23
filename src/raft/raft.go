@@ -48,6 +48,11 @@ type ApplyMsg struct {
     Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
+type LogEntry struct {
+    LogTerm int
+    LogComd interface{}
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -70,24 +75,20 @@ type Raft struct {
     chanGrantVote chan bool
     chanLeader chan bool
     chanApply chan ApplyMsg
+
+    log []LogEntry
+
+    commitIndex int
+    lastApplied int
+
+    nextIndex []int
+    matchIndex []int
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
-    var term int
-	var isleader bool
-    // Your code here.
-
-    term = rf.currentTerm
-    if rf.state == STATE_LEADER {
-        isleader = true
-    } else {
-        isleader = false
-    }
-
-    return term, isleader
+    return rf.currentTerm, rf.state == STATE_LEADER
 }
 
 //
@@ -153,9 +154,9 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 
         reply.Term = args.Term
         reply.Success = true
-		fmt.Printf("%v: Vote to %v\n", rf.me, args.LeaderId)
+        fmt.Printf("%v: Vote to %v\n", rf.me, args.LeaderId)
     } else {
-		fmt.Printf("%v: Don't vote to %v\n", rf.me, args.LeaderId)
+        fmt.Printf("%v: Don't vote to %v\n", rf.me, args.LeaderId)
         reply.Term = rf.currentTerm
         reply.Success = false
     }
@@ -197,8 +198,10 @@ func (rf *Raft) boatcastRequestVote() {
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
     ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+
     rf.mu.Lock()
     defer rf.mu.Unlock()
+
     if ok {
         term := rf.currentTerm
         if rf.state != STATE_CANDIDATE {
@@ -221,35 +224,124 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 type AppendEntriesArgs struct {
     Term int
     Leader int
+    PrevLogIndex int
+    PrevLogTerm int
+    LeaderCommit int
+
+    Entries []LogEntry
 }
 
 type AppendEntriesReply struct {
-
+    Success bool
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
+
     rf.chanHeartbeat <- true
 
-	rf.currentTerm = args.Term
-	rf.state = STATE_FLLOWER
+    rf.currentTerm = args.Term
+    rf.state = STATE_FLLOWER
+    rf.voteFor = -1
+
+    if args.PrevLogIndex < 0 || (args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].LogTerm == args.PrevLogTerm){
+        if len(args.Entries) > 0 {
+            rf.log = append(rf.log, args.Entries...)
+            fmt.Printf("%v: Add log: %v\n", rf.me, args.Entries)
+        }
+        reply.Success = true
+    } else {
+        fmt.Printf("PrevLogIndex: %v\n", args.PrevLogIndex)
+        reply.Success = false
+    }
+
+    if args.LeaderCommit > rf.commitIndex {
+        last := len(rf.log)
+        if args.LeaderCommit > last {
+            rf.commitIndex = last
+        } else {
+            rf.commitIndex = args.LeaderCommit
+        }
+        rf.chanCommit <- true
+    }
 }
 
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool {
     // fmt.Printf("%v: Send heartbeat to %v\n", rf.me, server)
     ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
+
+    if ok {
+        if rf.state != STATE_LEADER  || args.Term != rf.currentTerm {
+            return ok
+        }
+    }
+
+    if reply.Success {
+        if len(args.Entries) > 0 {
+            rf.nextIndex[server] += len(args.Entries)
+            rf.matchIndex[server] = rf.nextIndex[server] -1
+            fmt.Printf("%v nextIndex: %v\n", server, rf.nextIndex[server])
+        }
+    } else {
+        fmt.Printf("NextIndex: %v\n", rf.nextIndex[server])
+        rf.nextIndex[server]--
+    }
+
     return ok
 }
 
 func (rf *Raft) boatcastAppendEntries() {
-    for i := range rf.peers {
-        if i != rf.me && rf.state == STATE_LEADER {
-            var args AppendEntriesArgs
-			args.Term = rf.currentTerm
-			args.Leader = rf.me
-            go func(i int, args AppendEntriesArgs) {
-                var reply AppendEntriesReply
-                rf.sendAppendEntries(i, args, &reply)
-            }(i,args)
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
+
+    if rf.state == STATE_LEADER {
+
+        N := rf.commitIndex
+        last := len(rf.log)
+        for i := rf.commitIndex + 1; i < last; i++ {
+            num := 1
+                for j := range rf.peers {
+                    if j != rf.me && rf.matchIndex[j] >= i && rf.log[i].LogTerm == rf.currentTerm {
+                        num++
+                    }
+                }
+                if 2*num > len(rf.peers) {
+                    N = i
+                } else {
+                     break
+                }
+            }
+        if N != rf.commitIndex {
+            rf.commitIndex = N
+            rf.chanCommit <- true
+        }
+
+        for i := range rf.peers {
+            if i != rf.me {
+                var args AppendEntriesArgs
+                args.Term = rf.currentTerm
+                args.Leader = rf.me
+                args.LeaderCommit = rf.commitIndex
+                args.PrevLogIndex = rf.nextIndex[i] - 1
+                fmt.Printf("%v: To %v, PrevLogIndex %v, log number %v\n", rf.me, i, args.PrevLogIndex, len(rf.log))
+                if args.PrevLogIndex >= 0 {
+                    args.PrevLogTerm = rf.log[args.PrevLogIndex].LogTerm
+                    args.Entries = make([]LogEntry, len(rf.log) - args.PrevLogIndex - 1)
+                    copy(args.Entries, rf.log[args.PrevLogIndex + 1:])
+                } else {
+                    args.PrevLogTerm = -1
+                    args.Entries = make([]LogEntry, len(rf.log))
+                    copy(args.Entries, rf.log)
+                }
+                go func(i int, args AppendEntriesArgs) {
+                    var reply AppendEntriesReply
+                    rf.sendAppendEntries(i, args, &reply)
+                }(i,args)
+            }
         }
     }
 }
@@ -269,9 +361,20 @@ func (rf *Raft) boatcastAppendEntries() {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+    // rf.mu.Lock()
+    // defer rf.mu.Unlock()
+
     index := -1
-    term := -1
-    isLeader := true
+    term := rf.currentTerm
+
+    isLeader := rf.state == STATE_LEADER
+
+    if isLeader {
+        fmt.Printf("%v: Command %v\n", rf.me, command)
+        index = len(rf.log)
+        rf.log = append(rf.log, LogEntry{LogTerm: term, LogComd: command})
+        rf.boatcastAppendEntries()
+    }
 
     return index, term, isLeader
 }
@@ -317,7 +420,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
     rf.readPersist(persister.ReadRaftState())
 
     go func() {
+        index := 1
         for {
+            index++
             switch rf.state {
             case STATE_FLLOWER:
                 select {
@@ -337,18 +442,42 @@ func Make(peers []*labrpc.ClientEnd, me int,
                 select {
                 case <-time.After(time.Duration(rand.Int63() % 333 + 550) * time.Millisecond):
                 case <-rf.chanHeartbeat:
-					fmt.Printf("%v: Reveive chanHeartbeat\n",rf.me)
+                    fmt.Printf("%v: Reveive chanHeartbeat\n",rf.me)
                     rf.state = STATE_FLLOWER
                 case <- rf.chanLeader:
                     rf.mu.Lock()
                     rf.state = STATE_LEADER
                     fmt.Printf("%v: Become leader\n",rf.me)
-					rf.mu.Unlock()
-					// rf.boatcastAppendEntries()
+                    rf.nextIndex = make([]int, len(rf.peers))
+                    rf.matchIndex = make([]int, len(rf.peers))
+                    for i := range rf.peers {
+                        rf.nextIndex[i] = len(rf.log)
+                        rf.matchIndex[i] = 0
+                    }
+                    rf.mu.Unlock()
+                    // rf.boatcastAppendEntries()
                 }
             case STATE_LEADER:
+                // fmt.Printf("%v: Send heartbeat %v\n", rf.me, index)
                 rf.boatcastAppendEntries()
                 time.Sleep(HBINTERVAL)
+            }
+        }
+    }()
+
+    go func() {
+        for {
+            select {
+            case <- rf.chanCommit:
+                rf.mu.Lock()
+                commitIndex := rf.commitIndex
+                for i := rf.lastApplied + 1; i <= commitIndex; i++ {
+                    fmt.Printf("%v: Commit %v\n", rf.me, i)
+                    msg := ApplyMsg{Index: i, Command: rf.log[i].LogComd}
+                    applyCh <- msg
+                }
+                rf.lastApplied = commitIndex
+                rf.mu.Unlock()
             }
         }
     }()

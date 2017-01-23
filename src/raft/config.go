@@ -149,6 +149,8 @@ func (cfg *config) start1(i int) {
                 // ignore the snapshot
             } else if v, ok := (m.Command).(int); ok {
                 cfg.mu.Lock()
+                fmt.Printf("Message: %v\n", m)
+                fmt.Printf("cfg.logs: %v\n", cfg.logs)
                 for j := 0; j < len(cfg.logs); j++ {
                     if old, oldok := cfg.logs[j][m.Index]; oldok && old != v {
                         // some server has already committed a different value for this entry!
@@ -384,6 +386,7 @@ func (cfg *config) one(cmd int, expectedServers int) int {
     starts := 0
     for time.Since(t0).Seconds() < 10 {
         // try all the servers, maybe one is the leader.
+        fmt.Printf("%v\n", time.Since(t0).Seconds())
         index := -1
         for si := 0; si < cfg.n; si++ {
             starts = (starts + 1) % cfg.n
