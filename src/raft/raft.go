@@ -245,7 +245,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
     rf.state = STATE_FLLOWER
     rf.voteFor = -1
 
-    if args.PrevLogIndex < 0 || (args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].LogTerm == args.PrevLogTerm){
+    if args.PrevLogIndex < 0 || (args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].LogTerm == args.PrevLogTerm) {
         if len(args.Entries) > 0 {
             rf.log = append(rf.log, args.Entries...)
             fmt.Printf("%v: Add log: %v\n", rf.me, args.Entries)
@@ -270,6 +270,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool {
     // fmt.Printf("%v: Send heartbeat to %v\n", rf.me, server)
     ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	fmt.Printf("%v\n", reply.Success)
 
     rf.mu.Lock()
     defer rf.mu.Unlock()
@@ -278,7 +279,9 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *App
         if rf.state != STATE_LEADER  || args.Term != rf.currentTerm {
             return ok
         }
-    }
+	} else {
+		return ok
+	}
 
     if reply.Success {
         if len(args.Entries) > 0 {
@@ -321,7 +324,7 @@ func (rf *Raft) boatcastAppendEntries() {
         }
 
         for i := range rf.peers {
-            if i != rf.me {
+            if i != rf.me && rf.state == STATE_LEADER {
                 var args AppendEntriesArgs
                 args.Term = rf.currentTerm
                 args.Leader = rf.me
@@ -361,8 +364,8 @@ func (rf *Raft) boatcastAppendEntries() {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-    // rf.mu.Lock()
-    // defer rf.mu.Unlock()
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
 
     index := -1
     term := rf.currentTerm
@@ -373,7 +376,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
         fmt.Printf("%v: Command %v\n", rf.me, command)
         index = len(rf.log)
         rf.log = append(rf.log, LogEntry{LogTerm: term, LogComd: command})
-        rf.boatcastAppendEntries()
+        go rf.boatcastAppendEntries()
     }
 
     return index, term, isLeader
