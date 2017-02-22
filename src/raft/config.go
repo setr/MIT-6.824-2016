@@ -150,7 +150,6 @@ func (cfg *config) start1(i int) {
             } else if v, ok := (m.Command).(int); ok {
                 cfg.mu.Lock()
                 fmt.Printf("Message: %v\n", m)
-                fmt.Printf("cfg.logs: %v\n", cfg.logs)
                 for j := 0; j < len(cfg.logs); j++ {
                     if old, oldok := cfg.logs[j][m.Index]; oldok && old != v {
                         // some server has already committed a different value for this entry!
@@ -321,7 +320,6 @@ func (cfg *config) checkNoLeader() {
 func (cfg *config) nCommitted(index int) (int, interface{}) {
     count := 0
     cmd := -1
-    fmt.Printf("cfg.logs: %v\n", cfg.logs)
     for i := 0; i < len(cfg.rafts); i++ {
         if cfg.applyErr[i] != "" {
             cfg.t.Fatal(cfg.applyErr[i])
