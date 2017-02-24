@@ -17,17 +17,14 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "labrpc"
-import "time"
-import "bytes"
-import "encoding/gob"
-import "math/rand"
-import "fmt"
-
-// import "bytes"
-// import "encoding/gob"
-
+import (
+	"sync"
+    "labrpc"
+    "time"
+    "bytes"
+    "encoding/gob"
+    "math/rand"
+)
 
 const (
     STATE_LEADER = iota
@@ -161,15 +158,15 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
     // Your code here.
-    fmt.Printf("%v: Get request vote from %v, term %v\n", rf.me, args.CandidateId, args.Term)
+    // fmt.Printf("%v: Get request vote from %v, term %v\n", rf.me, args.CandidateId, args.Term)
     rf.mu.Lock()
     defer rf.mu.Unlock()
     defer rf.persist()
 
-	reply.VoteGranted = false
-    if args.Term < rf.currentTerm {
+    reply.VoteGranted = false
+    if args.Term <= rf.currentTerm {
         reply.Term = rf.currentTerm
-        //fmt.Printf("%v currentTerm:%v vote reject for:%v term:%v",rf.me,rf.currentTerm,args.CandidateId,args.Term)
+        //fmt.Printf("%v currentTerm:%v vote reject for:%v term:%v\n",rf.me,rf.currentTerm,args.CandidateId,args.Term)
         return
     }
 
@@ -198,7 +195,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
         rf.state = STATE_FLLOWER
         reply.VoteGranted = true
         rf.voteFor = args.CandidateId
-        //fmt.Printf("%v currentTerm:%v vote for:%v term:%v",rf.me,rf.currentTerm,args.CandidateId,args.Term)
+        // fmt.Printf("%v currentTerm:%v vote for:%v term:%v\n",rf.me,rf.currentTerm,args.CandidateId,args.Term)
     }
 }
 
@@ -244,7 +241,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
     rf.mu.Lock()
     defer rf.mu.Unlock()
 
-	if ok {
+    if ok {
         term := rf.currentTerm
         if rf.state != STATE_CANDIDATE {
             return ok
@@ -293,30 +290,49 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
     rf.chanHeartbeat <- true
     reply.CurrentTerm = rf.currentTerm
 
-    fmt.Printf("%v: currentTerm: %v, args.Term: %v\n", rf.me, rf.currentTerm, args.Term)
+    // fmt.Printf("%v: currentTerm: %v, args.Term: %v\n", rf.me, rf.currentTerm, args.Term)
     if rf.currentTerm <= args.Term {
         rf.currentTerm = args.Term
         rf.state = STATE_FLLOWER
         rf.voteFor = -1
-        if args.PrevLogIndex == 0 || (args.PrevLogIndex < len(rf.log) && rf.log[args.PrevLogIndex].LogTerm == args.PrevLogTerm) {
+
+        if (args.PrevLogIndex >= len(rf.log)) {
+            reply.PrevLogIndex = len(rf.log)
+            reply.Success = false
+            return
+        }
+
+        // fmt.Printf("log PrevLogIndex: %v %v\n", len(rf.log), args.PrevLogIndex)
+        if args.PrevLogIndex == 0 || rf.log[args.PrevLogIndex].LogTerm == args.PrevLogTerm {
             if len(args.Entries) > 0 {
                 rf.log = append(rf.log[:args.PrevLogIndex + 1], args.Entries...)
-                fmt.Printf("%v: Add log: %v\n", rf.me, args.Entries)
+                // fmt.Printf("%v: Add log: %v\n", rf.me, args.Entries)
             }
-        if args.LeaderCommit > rf.commitIndex {
-            last := len(rf.log)
-            if args.LeaderCommit > last {
-                rf.commitIndex = last
-            } else {
-                rf.commitIndex = args.LeaderCommit
+            if args.LeaderCommit > rf.commitIndex {
+                last := len(rf.log)
+                if args.LeaderCommit > last {
+                    rf.commitIndex = last
+                } else {
+                    rf.commitIndex = args.LeaderCommit
+                }
+                rf.chanCommit <- true
             }
-            rf.chanCommit <- true
-        }
             reply.PrevLogIndex = len(rf.log)
             reply.Success = true
         } else {
-            reply.PrevLogIndex = args.PrevLogIndex - 1
-            fmt.Printf("PrevLogIndex: %v\n", args.PrevLogIndex)
+            if len(rf.log) <= args.PrevLogIndex {
+                reply.PrevLogIndex = len(rf.log)
+            } else {
+                term := rf.log[args.PrevLogIndex].LogTerm
+                for i := args.PrevLogIndex - 1; i >= 0; i-- {
+                    if (rf.log[i].LogTerm != term) {
+                        reply.PrevLogIndex = i + 1
+                        // fmt.Printf("last term begin: %v \n", reply.PrevLogIndex)
+                        break
+                    }
+                }
+            }
+            // fmt.Printf("%v: PrevLogIndex: %v\n", rf.me, reply.PrevLogIndex)
             reply.Success = false
         }
     } else {
@@ -329,7 +345,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool {
     // fmt.Printf("%v: Send heartbeat to %v\n", rf.me, server)
     ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-    fmt.Printf("%v to %v: %v\n", rf.me, server, ok)
+    // fmt.Printf("%v to %v: %v\n", rf.me, server, ok)
 
     rf.mu.Lock()
     defer rf.mu.Unlock()
@@ -346,10 +362,10 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *App
         if len(args.Entries) > 0 {
             rf.nextIndex[server] = reply.PrevLogIndex
             rf.matchIndex[server] = rf.nextIndex[server] - 1
-            fmt.Printf("%v: nextIndex: %v\n", server, rf.nextIndex[server])
+            // fmt.Printf("%v: nextIndex: %v\n", server, rf.nextIndex[server])
         }
     } else {
-        fmt.Printf("NextIndex: %v\n", rf.nextIndex[server])
+        // fmt.Printf("NextIndex: %v\n", rf.nextIndex[server])
         if reply.CurrentTerm > rf.currentTerm {
             rf.state = STATE_FLLOWER
             rf.voteFor = -1
@@ -382,8 +398,8 @@ func (rf *Raft) boatcastAppendEntries() {
                 break
             }
         }
-        fmt.Printf("---------------------------------%v\n", N)
-        if N != rf.commitIndex {
+        // fmt.Printf("---------------------------------%v\n", N)
+        if N != rf.commitIndex && rf.log[N].LogTerm == rf.currentTerm {
             rf.commitIndex = N
             rf.chanCommit <- true
         }
@@ -395,7 +411,7 @@ func (rf *Raft) boatcastAppendEntries() {
                 args.Leader = rf.me
                 args.LeaderCommit = rf.commitIndex
                 args.PrevLogIndex = rf.nextIndex[i] - 1
-                fmt.Printf("%v: To %v, PrevLogIndex %v, log number %v, term %v\n", rf.me, i, args.PrevLogIndex, len(rf.log), rf.currentTerm)
+                // fmt.Printf("%v: To %v, PrevLogIndex %v, log number %v, term %v\n", rf.me, i, args.PrevLogIndex, len(rf.log), rf.currentTerm)
                 if args.PrevLogIndex >= 0 {
                     args.PrevLogTerm = rf.log[args.PrevLogIndex].LogTerm
                     args.Entries = make([]LogEntry, len(rf.log) - args.PrevLogIndex - 1)
@@ -438,7 +454,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
     isLeader := rf.state == STATE_LEADER
 
     if isLeader {
-        fmt.Printf("%v: Command %v\n", rf.me, command)
+        // fmt.Printf("%v: Command %v\n", rf.me, command)
         index = len(rf.log)
         rf.log = append(rf.log, LogEntry{LogTerm: term, LogComd: command})
         // go rf.boatcastAppendEntries()
@@ -494,7 +510,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
     go func() {
         index := 1
         for {
-            fmt.Printf("%v: logs %v\n", rf.me, rf.log)
+            // fmt.Printf("%v: logs %v\n", rf.me, rf.log)
             index++
             switch rf.state {
             case STATE_FLLOWER:
@@ -505,7 +521,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
                     rf.state = STATE_CANDIDATE
                 }
             case STATE_CANDIDATE:
-                fmt.Printf("%v: Start candidate\n", rf.me)
+                // fmt.Printf("%v: Start candidate\n", rf.me)
                 rf.mu.Lock()
                 rf.currentTerm++
                 rf.voteFor = me
@@ -516,12 +532,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
                 case <-time.After(time.Duration(rand.Int63() % 333 + 550) * time.Millisecond):
                     rf.currentTerm++
                 case <-rf.chanHeartbeat:
-                    fmt.Printf("%v: Reveive chanHeartbeat\n",rf.me)
+                    // fmt.Printf("%v: Reveive chanHeartbeat\n",rf.me)
                     rf.state = STATE_FLLOWER
                 case <- rf.chanLeader:
                     rf.mu.Lock()
                     rf.state = STATE_LEADER
-                    fmt.Printf("%v: Become leader\n",rf.me)
+                    // fmt.Printf("%v: Become leader\n",rf.me)
                     rf.nextIndex = make([]int, len(rf.peers))
                     rf.matchIndex = make([]int, len(rf.peers))
                     for i := range rf.peers {
@@ -546,7 +562,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
                 rf.mu.Lock()
                 commitIndex := rf.commitIndex
                 for i := rf.lastApplied + 1; i <= commitIndex; i++ {
-                    fmt.Printf("%v: Commit %v\n", rf.me, i)
+                    // fmt.Printf("%v: Commit %v\n", rf.me, i)
                     msg := ApplyMsg{Index: i, Command: rf.log[i].LogComd}
                     applyCh <- msg
                 }

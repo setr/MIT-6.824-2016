@@ -335,13 +335,11 @@ func TestBackup(t *testing.T) {
     cfg.disconnect((leader1 + 2) % servers)
     cfg.disconnect((leader1 + 3) % servers)
     cfg.disconnect((leader1 + 4) % servers)
-    fmt.Printf("---------------------------------------------A")
 
     // submit lots of commands that won't commit
     for i := 0; i < 50; i++ {
         cfg.rafts[leader1].Start(rand.Int())
     }
-    fmt.Printf("---------------------------------------------B")
 
     time.Sleep(RaftElectionTimeout / 2)
 
@@ -353,13 +351,11 @@ func TestBackup(t *testing.T) {
     cfg.connect((leader1 + 3) % servers)
     cfg.connect((leader1 + 4) % servers)
 
-    fmt.Printf("--------------------------------------------C")
     // lots of successful commands to new group.
     for i := 0; i < 50; i++ {
         cfg.one(rand.Int(), 3)
     }
 
-    fmt.Printf("--------------------------------------------D")
     // now another partitioned leader and one follower
     leader2 := cfg.checkOneLeader()
     other := (leader1 + 2) % servers
@@ -368,7 +364,6 @@ func TestBackup(t *testing.T) {
     }
     cfg.disconnect(other)
 
-    fmt.Printf("--------------------------------------------E")
     // lots more commands that won't commit
     for i := 0; i < 50; i++ {
         cfg.rafts[leader2].Start(rand.Int())
@@ -384,20 +379,17 @@ func TestBackup(t *testing.T) {
     cfg.connect((leader1 + 1) % servers)
     cfg.connect(other)
 
-    fmt.Printf("--------------------------------------------F")
     // lots of successful commands to new group.
     for i := 0; i < 50; i++ {
         cfg.one(rand.Int(), 3)
     }
 
-    fmt.Printf("--------------------------------------------G")
     // now everyone
     for i := 0; i < servers; i++ {
         cfg.connect(i)
     }
     cfg.one(rand.Int(), servers)
 
-    fmt.Printf("--------------------------------------------H")
     fmt.Printf("  ... Passed\n")
 }
 
