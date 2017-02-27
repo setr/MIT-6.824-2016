@@ -44,44 +44,45 @@ type ApplyMsg struct {
     Index       int
     Command     interface{}
     UseSnapshot bool   // ignore for lab2; only used in lab3
+    // Snapshot 没有实现
     Snapshot    []byte // ignore for lab2; only used in lab3
 }
 
 type LogEntry struct {
-    LogTerm int
-    LogComd interface{}
+    LogTerm int // Log 提交 term
+    LogComd interface{} // Log 原始命令
 }
 
 //
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-    mu        sync.Mutex
-    peers     []*labrpc.ClientEnd
-    persister *Persister
+    mu        sync.Mutex // 锁
+    peers     []*labrpc.ClientEnd // 节点之间相互关联
+    persister *Persister // 持久化
     me        int // index into peers[]
 
     // Your data here.
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
 
-    currentTerm int
-    voteFor int
-    voteCount int
-    state int
-    chanCommit chan bool
-    chanHeartbeat chan bool
-    chanGrantVote chan bool
-    chanLeader chan bool
-    chanApply chan ApplyMsg
+    currentTerm int // 当前 term
+    voteFor int // 给某一节点投票，未投票为 -1
+    voteCount int  // 获取票数
+    state int // 当前状态
+    chanCommit chan bool // 已提交数据通道
+    chanHeartbeat chan bool // 心跳包通道
+    chanGrantVote chan bool // 投票通道
+    chanLeader chan bool // 领导者选举成功通道
+    chanApply chan ApplyMsg // 命令提交通道
 
-    log []LogEntry
+    log []LogEntry // 所有日志
 
-    commitIndex int
-    lastApplied int
+    commitIndex int // 可提交日志最大标号
+    lastApplied int // 已提交日志编号
 
-    nextIndex []int
-    matchIndex []int
+    nextIndex []int // 每个节点需要同步的日志最小编号
+    matchIndex []int //每个节点已经匹配的编号
 }
 
 // return currentTerm and whether this server
@@ -138,10 +139,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
     // Your data here.
-    Term int
-    CandidateId int
-    LastLogIndex int
-    LastLogTerm int
+    Term int // 当前 Term
+    CandidateId int // 请求投票节点 id
+    LastLogIndex int // 请求投票节点日志最大编号
+    LastLogTerm int // 请求投票节点日志最大 term
 }
 
 //
@@ -149,8 +150,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
     // Your data here.
-    Term int
-    VoteGranted bool
+    Term int // 投票节点当前 term
+    VoteGranted bool // 是否投票给申请节点
 }
 
 //
@@ -164,12 +165,13 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
     defer rf.persist()
 
     reply.VoteGranted = false
+    // 如果申请投票节点 term 小于等于 当前节点，无法获得投票，并返回当前节点 term 用来更新申请投票节点 term
     if args.Term <= rf.currentTerm {
         reply.Term = rf.currentTerm
         //fmt.Printf("%v currentTerm:%v vote reject for:%v term:%v\n",rf.me,rf.currentTerm,args.CandidateId,args.Term)
         return
     }
-
+    // 如果申请投票节点 term 大于 当前节点，则当前节点落后于申请投票节点，当前节点状态转移为追随者，更细当前节点状态
     if args.Term > rf.currentTerm {
         rf.currentTerm = args.Term
         rf.state = STATE_FLLOWER
@@ -177,28 +179,28 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
     }
     reply.Term = rf.currentTerm
 
+    // 保证申请投票节点所拥有的日志不少于当前节点，才能获得投票
     index := len(rf.log)
     term := rf.log[index - 1].LogTerm
-    // := moreUpToDate(rf.getLastIndex(), rf.getLastTerm(), args.LastLogIndex, args.LastLogTerm)
     uptoDate := false
-
     if args.LastLogTerm > term {
         uptoDate = true
     }
-
     if args.LastLogTerm == term && args.LastLogIndex >= index { // at least up to date
         uptoDate = true
     }
 
+    // 当前节点尚未投票，或已经投给此申请节点，并且前面条件都满足情况下，投票给此申请节点
     if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && uptoDate {
         rf.chanGrantVote <- true
         rf.state = STATE_FLLOWER
-        reply.VoteGranted = true
+       reply.VoteGranted = true
         rf.voteFor = args.CandidateId
         // fmt.Printf("%v currentTerm:%v vote for:%v term:%v\n",rf.me,rf.currentTerm,args.CandidateId,args.Term)
     }
 }
 
+// 对所有其他节点申请投票
 func (rf *Raft) boatcastRequestVote() {
     var args RequestVoteArgs
     rf.mu.Lock()
@@ -257,6 +259,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
         }
         if reply.VoteGranted {
             rf.voteCount++
+            // 获得超过一半票，当选为领导者，向 chanLeader 通道发送消息
             if rf.state == STATE_CANDIDATE && rf.voteCount > len(rf.peers)/2 {
                 rf.state = STATE_FLLOWER
                 rf.chanLeader <- true
@@ -267,19 +270,19 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 }
 
 type AppendEntriesArgs struct {
-    Term int
-    Leader int
-    PrevLogIndex int
-    PrevLogTerm int
-    LeaderCommit int
+    Term int // 当前更新日志 term
+    Leader int // 当前领导者 id
+    PrevLogIndex int // 上一个未同步节点编号
+    PrevLogTerm int // 上一个未同步节点 term
+    LeaderCommit int // 领导者已提交日志最大编号
 
-    Entries []LogEntry
+    Entries []LogEntry // 未同步日志
 }
 
 type AppendEntriesReply struct {
-    PrevLogIndex int
-    CurrentTerm int
-    Success bool
+    PrevLogIndex int // 当前上一个未同步节点编号
+    CurrentTerm int // 当前节点 term
+    Success bool // 更新成功或失败
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -287,15 +290,17 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
     defer rf.mu.Unlock()
     defer rf.persist()
 
+    // 获得心跳包，重置超时计时器
     rf.chanHeartbeat <- true
     reply.CurrentTerm = rf.currentTerm
 
     // fmt.Printf("%v: currentTerm: %v, args.Term: %v\n", rf.me, rf.currentTerm, args.Term)
+    // 当前节点 term 小于等于领导者节点，否则当前节点比领导者新，无法更新
     if rf.currentTerm <= args.Term {
         rf.currentTerm = args.Term
         rf.state = STATE_FLLOWER
         rf.voteFor = -1
-
+        // 没有需要更新的日志
         if (args.PrevLogIndex >= len(rf.log)) {
             reply.PrevLogIndex = len(rf.log)
             reply.Success = false
@@ -303,6 +308,7 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
         }
 
         // fmt.Printf("log PrevLogIndex: %v %v\n", len(rf.log), args.PrevLogIndex)
+        // 之前日志与领导者已经同步，可以更新之后的日志
         if args.PrevLogIndex == 0 || rf.log[args.PrevLogIndex].LogTerm == args.PrevLogTerm {
             if len(args.Entries) > 0 {
                 rf.log = append(rf.log[:args.PrevLogIndex + 1], args.Entries...)
@@ -319,17 +325,14 @@ func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply)
             }
             reply.PrevLogIndex = len(rf.log)
             reply.Success = true
+        // 之前日志与领导者不同步，需要向前回溯未更新日志，为防止一个一个回溯超时，每次回溯一个 term 日志
         } else {
-            if len(rf.log) <= args.PrevLogIndex {
-                reply.PrevLogIndex = len(rf.log)
-            } else {
-                term := rf.log[args.PrevLogIndex].LogTerm
-                for i := args.PrevLogIndex - 1; i >= 0; i-- {
-                    if (rf.log[i].LogTerm != term) {
-                        reply.PrevLogIndex = i + 1
-                        // fmt.Printf("last term begin: %v \n", reply.PrevLogIndex)
-                        break
-                    }
+            term := rf.log[args.PrevLogIndex].LogTerm
+            for i := args.PrevLogIndex - 1; i >= 0; i-- {
+                if (rf.log[i].LogTerm != term) {
+                    reply.PrevLogIndex = i + 1
+                    // fmt.Printf("last term begin: %v \n", reply.PrevLogIndex)
+                    break
                 }
             }
             // fmt.Printf("%v: PrevLogIndex: %v\n", rf.me, reply.PrevLogIndex)
@@ -366,12 +369,15 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *App
         }
     } else {
         // fmt.Printf("NextIndex: %v\n", rf.nextIndex[server])
+        // 如果当前领导者落后于其他节点，领导者退为追随者
         if reply.CurrentTerm > rf.currentTerm {
             rf.state = STATE_FLLOWER
             rf.voteFor = -1
             rf.persist()
+        // 更新失败，之前有未同步日志，回溯已经提交的日志
+        } else {
+            rf.nextIndex[server] = reply.PrevLogIndex
         }
-        rf.nextIndex[server] = reply.PrevLogIndex
     }
 
     return ok
@@ -380,9 +386,9 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *App
 func (rf *Raft) boatcastAppendEntries() {
     rf.mu.Lock()
     defer rf.mu.Unlock()
-
+    // 非领导者不需要发送消息，只需接受请求
     if rf.state == STATE_LEADER {
-
+        // 检查之间的日志是否已经在半数以上节点储存，若是的话提交日志
         N := rf.commitIndex
         last := len(rf.log)
         for i := rf.commitIndex + 1; i < last; i++ {
@@ -398,12 +404,12 @@ func (rf *Raft) boatcastAppendEntries() {
                 break
             }
         }
-        // fmt.Printf("---------------------------------%v\n", N)
+        // 有新的未提交但可提交的日志，并且最新的可提交日志为当前 term 产生的日志，此处是为了防止论文中 Figure 8 情况发生
         if N != rf.commitIndex && rf.log[N].LogTerm == rf.currentTerm {
             rf.commitIndex = N
             rf.chanCommit <- true
         }
-
+        // 对每个节点发送信息
         for i := range rf.peers {
             if i != rf.me && rf.state == STATE_LEADER {
                 var args AppendEntriesArgs
@@ -513,6 +519,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
             // fmt.Printf("%v: logs %v\n", rf.me, rf.log)
             index++
             switch rf.state {
+            // 追随者需要在超市之前从领导者或者是被选举者处获得请求，否则认为领导者已经失去联系，开始选举，申请成为领导者
             case STATE_FLLOWER:
                 select {
                 case <- rf.chanHeartbeat:
@@ -520,6 +527,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
                 case <- time.After(time.Duration(rand.Int63() % 333 + 550) * time.Millisecond):
                     rf.state = STATE_CANDIDATE
                 }
+            // 被选举者增加一个 term，从其他节点请求投票
             case STATE_CANDIDATE:
                 // fmt.Printf("%v: Start candidate\n", rf.me)
                 rf.mu.Lock()
@@ -527,6 +535,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
                 rf.voteFor = me
                 rf.voteCount = 1
                 rf.mu.Unlock()
+                // 请求投票
                 go rf.boatcastRequestVote()
                 select {
                 case <-time.After(time.Duration(rand.Int63() % 333 + 550) * time.Millisecond):
@@ -547,6 +556,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
                     rf.mu.Unlock()
                     // rf.boatcastAppendEntries()
                 }
+            // 领导者发送消息，同步日志
             case STATE_LEADER:
                 // fmt.Printf("%v: Send heartbeat %v\n", rf.me, index)
                 rf.boatcastAppendEntries()
@@ -554,7 +564,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
             }
         }
     }()
-
+    // 提交可以提交的日志
     go func() {
         for {
             select {
