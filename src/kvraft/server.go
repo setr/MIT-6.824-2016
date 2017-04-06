@@ -85,8 +85,8 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
     } else {
         // DPrintf("%v: Get: %v\n", kv.me, args.Key)
         reply.WrongLeader = false
-        reply.Value = kv.db[args.Key]
         kv.mu.Lock()
+        reply.Value = kv.db[args.Key]
         kv.ack[args.Id] = args.Reqid
         kv.mu.Unlock()
     }
