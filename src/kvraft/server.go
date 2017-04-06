@@ -39,14 +39,14 @@ type RaftKV struct {
 
     // Your definitions here.
     db map[string]string
-    result map[int]chan bool
+    result map[int]chan Op
     ack map[int64]int
 }
 
 func (kv *RaftKV) AppendEntryToLog(entry Op) bool {
     // DPrintf("%v\n", kv.me)
     index, _, isLeader := kv.rf.Start(entry)
-    // DPrintf("%v: %v\n", kv.me, isLeader)
+    DPrintf("%v: %v\n", kv.me, isLeader)
     if !isLeader {
         return false
     }
@@ -54,14 +54,14 @@ func (kv *RaftKV) AppendEntryToLog(entry Op) bool {
     kv.mu.Lock()
     ch, ok := kv.result[index]
     if !ok {
-        ch = make(chan bool, 1)
+        ch = make(chan Op, 1)
         kv.result[index] = ch
     }
     kv.mu.Unlock()
 
     select {
-    case <-ch:
-        return true
+    case op := <-ch:
+        return op == entry
     case <-time.After(1000 * time.Millisecond):
         return false
     }
@@ -78,12 +78,13 @@ func (kv *RaftKV) CheckDup(id int64, reqid int) bool {
 
 func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
     // Your code here.
+    // Get 也提交日志防止此 Leader 在少数分区中。
     entry := Op{Kind:"Get", Key:args.Key, Id:args.Id, Reqid:args.Reqid}
     ok := kv.AppendEntryToLog(entry)
     if !ok {
         reply.WrongLeader = true
     } else {
-        // DPrintf("%v: Get: %v\n", kv.me, args.Key)
+        DPrintf("%v: Get: %v\n", kv.me, args.Key)
         reply.WrongLeader = false
         kv.mu.Lock()
         reply.Value = kv.db[args.Key]
@@ -99,7 +100,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
     if !ok {
         reply.WrongLeader = true
     } else {
-        // DPrintf("%v: PutApppend: %v, Value: %v\n", kv.me, args.Key, args.Value)
+        DPrintf("%v: PutApppend: %v, Value: %v\n", kv.me, args.Key, args.Value)
         reply.WrongLeader = false
         kv.mu.Lock()
         reply.Err = OK
@@ -155,7 +156,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
     // Your initialization code here.
 
     kv.db = make(map[string]string)
-    kv.result = make(map[int]chan bool)
+    kv.result = make(map[int]chan Op)
     kv.ack = make(map[int64]int)
 
     kv.applyCh = make(chan raft.ApplyMsg)
@@ -175,9 +176,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
                 case <- ch:
                 default:
                 }
-                ch <- true
+                ch <- op
             } else {
-                kv.result[msg.Index] = make(chan bool, 1)
+                kv.result[msg.Index] = make(chan Op, 1)
             }
             kv.mu.Unlock()
         }

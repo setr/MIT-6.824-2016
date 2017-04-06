@@ -61,7 +61,7 @@ func (ck *Clerk) Get(key string) string {
             ok := v.Call("RaftKV.Get", &args, &reply)
             // fmt.Printf("Get WrongLeader: %v\n", reply.WrongLeader)
             if ok && reply.WrongLeader == false {
-                // fmt.Printf("Get WrongLeader: %v\n", reply.Value)
+                // fmt.Printf("%d: Get: %v-%v\n", ck.id, key, reply.Value)
                 return reply.Value
             }
         }
@@ -97,7 +97,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
             var reply PutAppendReply
             ok := v.Call("RaftKV.PutAppend", &args, &reply)
             if ok && reply.WrongLeader == false {
-                // fmt.Printf("%d: Put success %v-%v\n", index, key, value)
+                // fmt.Printf("%d: Put success: %v %v-%v\n", ck.id, ck.reqid, key, value)
                 return
             }
         }

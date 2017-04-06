@@ -18,7 +18,7 @@ package raft
 //
 
 import (
-	"sync"
+    "sync"
     "labrpc"
     "time"
     "bytes"
@@ -460,7 +460,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
     isLeader := rf.state == STATE_LEADER
 
     if isLeader {
-        // fmt.Printf("%v: Command %v\n", rf.me, command)
         index = len(rf.log)
         rf.log = append(rf.log, LogEntry{LogTerm: term, LogComd: command})
         // go rf.boatcastAppendEntries()
